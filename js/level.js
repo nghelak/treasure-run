@@ -33,26 +33,37 @@ const Level = {
   generate(round) {
     const P = [{ x: 0, y: 680, w: 2400, h: 40 }]; // ground
 
-    // Main chain, left -> right, in a mountain-wave profile: it climbs to a
-    // peak (y ~360) then dips back to ground-reachable height (y ~600) and
-    // repeats. Every stretch of ground has stairs nearby, so enemies can
-    // always climb after the player — no safe perches.
+    // Main chain, left -> right, in a low mountain-wave profile: it climbs to
+    // a modest peak (y ~450) then dips back to ground-reachable height
+    // (y ~600) and repeats, running all the way to the right edge of the
+    // world. Low peaks keep every platform within easy enemy pursuit.
     let x = rnd(210, 290);
     let y = rnd(575, 600);
     let dirUp = true;
     const chain = [];
-    while (x < 2080) {
-      const w = Math.round(rnd(110, 170));
+    while (x < 2250) {
+      const w = Math.min(Math.round(rnd(110, 170)), WORLD.w - 10 - Math.round(x));
       const p = { x: Math.round(x), y: Math.round(y), w, h: 12, oneWay: true };
       P.push(p);
       chain.push(p);
       x += w + rnd(40, 90);
       y += dirUp ? rnd(-85, -35) : rnd(35, 85);
-      if (y < 380) { y = Math.max(360, y); dirUp = false; }
+      if (y < 470) { y = Math.max(450, y); dirUp = false; }
       else if (y > 600) { y = Math.min(600, y); dirUp = true; }
     }
-    // Treasure goes on the highest of the last few platforms
-    const perch = chain.slice(-4).reduce((a, b) => (b.y < a.y ? b : a));
+    // Treasure sits on a final perch flush against the right edge of the
+    // world — the farthest possible run from the base
+    let perch = chain[chain.length - 1];
+    if (perch.x + perch.w < 2300) {
+      const fx = Math.min(perch.x + perch.w + Math.round(rnd(40, 80)), 2300);
+      const fp = {
+        x: fx, y: Math.round(clamp(perch.y - rnd(20, 85), 450, 600)),
+        w: WORLD.w - 10 - fx, h: 12, oneWay: true,
+      };
+      P.push(fp);
+      chain.push(fp);
+      perch = fp;
+    }
     this.treasureSpawn = { x: Math.round(perch.x + perch.w / 2 - 14), y: perch.y - 24 };
 
     // Filler platforms for alternate routes: must not crowd the chain, and
@@ -60,7 +71,7 @@ const Level = {
     const fillers = 4 + (round % 3);
     for (let i = 0; i < fillers; i++) {
       const f = {
-        x: Math.round(rnd(350, 2120)), y: Math.round(rnd(380, 620)),
+        x: Math.round(rnd(350, 2120)), y: Math.round(rnd(460, 620)),
         w: Math.round(rnd(100, 160)), h: 12, oneWay: true,
       };
       const clear = P.every(p =>
