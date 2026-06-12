@@ -88,9 +88,23 @@ const game = {
   // Screen-space position of the i-th owned gadget icon in the HUD.
   iconCenter(i) { return { x: 14 + i * 44 + 18, y: VIEW.h - 50 + 18 }; },
 
-  // A skill finished recharging: particle boom on its HUD icon + ping.
-  skillReady(gg, i) {
-    const c = this.iconCenter(i);
+  // Where a gadget's cooldown indicator lives on screen (HUD icon row on
+  // desktop, on-screen skill button on touch devices).
+  gadgetAnchor(gg) {
+    if (TouchUI.active) {
+      const idx = TouchUI.ownedSkills().findIndex(g2 => g2.id === gg.id);
+      if (idx >= 0 && TouchUI.skillSlots[idx]) {
+        return { x: TouchUI.skillSlots[idx].x, y: TouchUI.skillSlots[idx].y };
+      }
+      return { x: 90, y: 40 }; // passives: near the hearts
+    }
+    const i = GADGETS.filter(g2 => this.has(g2.id)).findIndex(g2 => g2.id === gg.id);
+    return this.iconCenter(i);
+  },
+
+  // A skill finished recharging: particle boom on its indicator + ping.
+  skillReady(gg) {
+    const c = this.gadgetAnchor(gg);
     this.readyFlash[gg.id] = 0.5;
     for (let n = 0; n < 14; n++) {
       const a = rnd(0, Math.PI * 2), s = rnd(50, 160);
@@ -119,10 +133,17 @@ const game = {
   roundEnemyCount() {
     if (this.isBossRound() || this.round === 1) return 1;
     const loop = Math.floor((this.round - 1) / 5);
-    if (loop === 0) return 2;
-    // First round after a boss eases the new type in with 2, then 3
-    return (this.round - 1) % 5 === 0 ? 2 : 3;
+    if (loop === 0) return 3;
+    // First round after a boss eases the new type in, then ramps up
+    return (this.round - 1) % 5 === 0 ? 3 : 4;
   },
+
+  // Boss rounds bring minions of the previous round's enemy type
+  bossMinionType() {
+    const r = this.round - 1; // the round before a boss is never a boss
+    return ENEMY_TYPES[(r - 1 - Math.floor((r - 1) / 5)) % 5];
+  },
+  bossMinionCount() { return 1 + this.round / 5; },
 
   shake(t, mag) { this.shakeT = Math.max(this.shakeT, t); this.shakeMag = mag; },
 
@@ -155,6 +176,11 @@ const game = {
     const type = this.roundEnemyType();
     if (type.boss) {
       this.enemies.push(new Boss(Level.bossSpawn.x, Level.bossSpawn.y, this.round / 5));
+      const mt = this.bossMinionType();
+      for (let i = 0; i < this.bossMinionCount(); i++) {
+        const sp = Level.enemySpawns[i % Level.enemySpawns.length];
+        this.enemies.push(new mt.cls(sp.x, sp.y - 40));
+      }
     } else {
       const count = this.roundEnemyCount();
       for (let i = 0; i < count; i++) {
@@ -214,12 +240,12 @@ const game = {
 
     switch (this.state) {
       case 'menu':
-        if (Input.pressed('confirm')) { Sfx.play('select'); this.newRun(); }
+        if (Input.pressed('confirm') || Input.tap()) { Sfx.play('select'); this.newRun(); }
         break;
 
       case 'intro':
         this.introT -= dt;
-        if (this.introT <= 0 || Input.pressed('confirm') || Input.pressed('jump')) {
+        if (this.introT <= 0 || Input.pressed('confirm') || Input.pressed('jump') || Input.tap()) {
           this.state = 'playing';
         }
         this.updateCamera(dt);
@@ -237,6 +263,12 @@ const game = {
         if (Input.pressed('pick2')) chosen = 1;
         if (Input.pressed('pick3')) chosen = 2;
         if (Input.pressed('confirm') || Input.pressed('jump')) chosen = this.pickIdx;
+        const tp = Input.tap();
+        if (tp) {
+          this.pickCardRects().forEach((rc, i) => {
+            if (tp.x >= rc.x && tp.x <= rc.x + rc.w && tp.y >= rc.y && tp.y <= rc.y + rc.h) chosen = i;
+          });
+        }
         if (chosen >= 0 && chosen < this.choices.length) {
           const gg = this.choices[chosen];
           this.gadgets[gg.id] = true;
@@ -249,16 +281,23 @@ const game = {
       }
 
       case 'fail':
-        if (Input.pressed('retry') || Input.pressed('confirm')) {
+        if (Input.pressed('retry') || Input.pressed('confirm') || Input.tap()) {
           Sfx.play('select');
           this.startRound();
         }
         break;
 
       case 'win':
-        if (Input.pressed('confirm')) { this.state = 'menu'; }
+        if (Input.pressed('confirm') || Input.tap()) { this.state = 'menu'; }
         break;
     }
+  },
+
+  pickCardRects() {
+    const n = this.choices.length, cw = 215, ch = 150, gap = 25;
+    const y = (VIEW.h - 320) / 2;
+    const x0 = (VIEW.w - (n * cw + (n - 1) * gap)) / 2;
+    return this.choices.map((c, i) => ({ x: x0 + i * (cw + gap), y: y + 100, w: cw, h: ch }));
   },
 
   updatePlaying(dt) {
@@ -326,7 +365,7 @@ const game = {
   render(g) {
     drawBackground(g, this.cam.x, this.cam.y);
 
-    if (this.state === 'menu') { this.drawMenu(g); return; }
+    if (this.state === 'menu') { this.drawMenu(g); this.drawRotateHint(g); return; }
 
     let sx = 0, sy = 0;
     if (this.shakeT > 0) {
@@ -379,11 +418,89 @@ const game = {
     g.restore();
 
     this.drawHUD(g);
+    this.drawTouchControls(g);
 
     if (this.state === 'intro') this.drawIntro(g);
     if (this.state === 'pick') this.drawPick(g);
     if (this.state === 'fail') this.drawFail(g);
     if (this.state === 'win') this.drawWin(g);
+
+    this.drawRotateHint(g);
+  },
+
+  drawTouchControls(g) {
+    if (!TouchUI.active) return;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+
+    const drawBtn = (b, label, color, held) => {
+      g.fillStyle = held ? 'rgba(115, 239, 247, 0.22)' : 'rgba(20, 24, 40, 0.45)';
+      g.beginPath();
+      g.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = color || 'rgba(244, 244, 244, 0.3)';
+      g.lineWidth = 2;
+      g.stroke();
+      g.fillStyle = 'rgba(244, 244, 244, 0.75)';
+      g.font = `bold ${Math.round(b.r * 0.55)}px monospace`;
+      g.fillText(label, b.x, b.y + 1);
+    };
+
+    for (const b of TouchUI.moveButtons) drawBtn(b, b.label, null, Input.down(b.key));
+    drawBtn(TouchUI.jumpButton, TouchUI.jumpButton.label, 'rgba(167, 240, 112, 0.5)', Input.down('jump'));
+
+    TouchUI.ownedSkills().forEach((gg, i) => {
+      const s = TouchUI.skillSlots[i];
+      if (!s) return;
+      const cd = this.cooldowns[gg.id] || 0;
+      drawBtn(s, gg.short, gg.color, false);
+      if (cd > 0 && gg.cd > 0) {
+        // Cooldown pie + countdown
+        g.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        g.beginPath();
+        g.moveTo(s.x, s.y);
+        g.arc(s.x, s.y, s.r, -Math.PI / 2, -Math.PI / 2 + (cd / gg.cd) * Math.PI * 2);
+        g.closePath();
+        g.fill();
+        g.fillStyle = PAL['c'];
+        g.font = 'bold 13px monospace';
+        g.fillText(cd.toFixed(1), s.x, s.y + 1);
+      } else {
+        g.fillStyle = this.mana >= gg.mana ? PAL['a'] : PAL['2'];
+        g.font = 'bold 9px monospace';
+        g.fillText(gg.mana + 'mp', s.x, s.y + s.r - 9);
+      }
+      const rf = this.readyFlash[gg.id] || 0;
+      if (rf > 0) {
+        g.strokeStyle = gg.color;
+        g.globalAlpha = rf / 0.5;
+        g.lineWidth = 3;
+        g.beginPath();
+        g.arc(s.x, s.y, s.r + (1 - rf / 0.5) * 14, 0, Math.PI * 2);
+        g.stroke();
+        g.globalAlpha = 1;
+      }
+    });
+
+    g.textBaseline = 'alphabetic';
+    g.textAlign = 'left';
+  },
+
+  drawRotateHint(g) {
+    if (!TouchUI.active || window.innerWidth >= window.innerHeight) return;
+    g.fillStyle = 'rgba(11, 13, 22, 0.92)';
+    g.fillRect(0, 0, VIEW.w, VIEW.h);
+    g.textAlign = 'center';
+    g.fillStyle = PAL['4'];
+    g.font = 'bold 40px monospace';
+    g.fillText('⟳', VIEW.w / 2, VIEW.h / 2 - 30);
+    g.fillStyle = PAL['c'];
+    g.font = 'bold 22px monospace';
+    g.fillText('ROTATE YOUR PHONE', VIEW.w / 2, VIEW.h / 2 + 20);
+    g.fillStyle = PAL['d'];
+    g.font = '14px monospace';
+    g.fillText('Treasure Run plays in landscape', VIEW.w / 2, VIEW.h / 2 + 50);
+    g.textAlign = 'left';
   },
 
   drawHUD(g) {
@@ -404,9 +521,10 @@ const game = {
     g.fillStyle = PAL['d'];
     g.fillText(this.player.carrying ? 'BRING IT HOME!' : 'STEAL THE TREASURE', VIEW.w / 2, 44);
 
-    // Gadget icons: short label, mana cost, cooldown countdown, ready flash
+    // Gadget icons: short label, mana cost, cooldown countdown, ready flash.
+    // On touch devices the on-screen skill buttons show all this instead.
     let iconIdx = 0;
-    for (const gg of GADGETS) {
+    for (const gg of TouchUI.active ? [] : GADGETS) {
       if (!this.has(gg.id)) continue;
       const gx = 14 + iconIdx * 44;
       const cd = this.cooldowns[gg.id] || 0;
@@ -508,7 +626,11 @@ const game = {
 
     g.fillStyle = PAL['c'];
     g.font = '14px monospace';
-    const lines = [
+    const lines = TouchUI.active ? [
+      'MOVE  ◀ ▶ (left side)   JUMP  ▲ (right side)',
+      'Skill buttons appear next to JUMP.',
+      'Gadgets unlock between rounds.',
+    ] : [
       'MOVE  ←→ / A D        JUMP  SPACE / W / ↑',
       'DROP DOWN  S / ↓      RETRY  R',
       'Gadgets unlock between rounds.',
@@ -518,7 +640,7 @@ const game = {
     if (Math.floor(this.time * 2) % 2 === 0) {
       g.fillStyle = PAL['5'];
       g.font = 'bold 20px monospace';
-      g.fillText('PRESS ENTER', VIEW.w / 2, 440);
+      g.fillText(TouchUI.active ? 'TAP TO START' : 'PRESS ENTER', VIEW.w / 2, 440);
     }
     g.textAlign = 'left';
   },
@@ -535,15 +657,21 @@ const game = {
       const pulse = Math.floor(this.time * 4) % 2 === 0;
       g.fillStyle = pulse ? PAL['4'] : PAL['2'];
       g.font = 'bold 24px monospace';
-      g.fillText('☠ ' + type.name.toUpperCase() + ' ☠', VIEW.w / 2, y + 82);
+      g.fillText('☠ ' + type.name.toUpperCase() + ' ☠', VIEW.w / 2, y + 80);
+      g.fillStyle = PAL['3'];
+      g.font = 'bold 14px monospace';
+      g.fillText('+ ' + this.bossMinionType().name.toUpperCase() + ' MINIONS ×' + this.bossMinionCount(), VIEW.w / 2, y + 104);
+      g.fillStyle = PAL['d'];
+      g.font = '14px monospace';
+      g.fillText(type.tip, VIEW.w / 2, y + 128);
     } else {
       g.fillStyle = PAL['2'];
       g.font = 'bold 20px monospace';
       g.fillText(type.name.toUpperCase() + (count > 1 ? '  ×' + count : ''), VIEW.w / 2, y + 80);
+      g.fillStyle = PAL['d'];
+      g.font = '14px monospace';
+      g.fillText(type.tip, VIEW.w / 2, y + 110);
     }
-    g.fillStyle = PAL['d'];
-    g.font = '14px monospace';
-    g.fillText(type.tip, VIEW.w / 2, y + 110);
     if (this.round === 1) {
       g.fillStyle = PAL['5'];
       g.fillText('Grab the chest on the far right, then run back to your flag!', VIEW.w / 2, y + 132);
@@ -561,36 +689,32 @@ const game = {
     g.font = '16px monospace';
     g.fillText('Choose a gadget:', VIEW.w / 2, y + 78);
 
-    const n = this.choices.length;
-    const cw = 215, ch = 150, gap = 25;
-    const totalW = n * cw + (n - 1) * gap;
-    let cxp = (VIEW.w - totalW) / 2;
+    const rects = this.pickCardRects();
     this.choices.forEach((gg, i) => {
+      const rc = rects[i];
       const sel = i === this.pickIdx;
-      const cyp = y + 100;
       g.fillStyle = sel ? '#1d2438' : '#11131f';
-      g.fillRect(cxp, cyp, cw, ch);
+      g.fillRect(rc.x, rc.y, rc.w, rc.h);
       g.strokeStyle = sel ? PAL['4'] : gg.color;
       g.lineWidth = sel ? 3 : 2;
-      g.strokeRect(cxp, cyp, cw, ch);
+      g.strokeRect(rc.x, rc.y, rc.w, rc.h);
 
       g.fillStyle = gg.color;
       g.font = 'bold 18px monospace';
-      g.fillText(gg.name, cxp + cw / 2, cyp + 38);
+      g.fillText(gg.name, rc.x + rc.w / 2, rc.y + 38);
       g.fillStyle = PAL['d'];
       g.font = '12px monospace';
-      this.wrapText(g, gg.desc, cxp + cw / 2, cyp + 66, cw - 24, 16);
+      this.wrapText(g, gg.desc, rc.x + rc.w / 2, rc.y + 66, rc.w - 24, 16);
       g.fillStyle = PAL['c'];
       g.font = 'bold 13px monospace';
-      g.fillText(gg.key === 'passive' ? 'PASSIVE' : 'KEY: ' + gg.key, cxp + cw / 2, cyp + ch - 32);
+      g.fillText(gg.key === 'passive' ? 'PASSIVE' : 'KEY: ' + gg.key, rc.x + rc.w / 2, rc.y + rc.h - 32);
       g.fillStyle = PAL['e'];
-      g.fillText('[' + (i + 1) + ']', cxp + cw / 2, cyp + ch - 12);
-      cxp += cw + gap;
+      g.fillText('[' + (i + 1) + ']', rc.x + rc.w / 2, rc.y + rc.h - 12);
     });
 
     g.fillStyle = PAL['d'];
     g.font = '13px monospace';
-    g.fillText('1/2/3 or ←→ + ENTER', VIEW.w / 2, y + 295);
+    g.fillText(TouchUI.active ? 'Tap a card to choose' : '1/2/3 or ←→ + ENTER', VIEW.w / 2, y + 295);
     g.textAlign = 'left';
   },
 

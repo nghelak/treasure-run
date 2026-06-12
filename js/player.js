@@ -21,7 +21,7 @@ class Player {
   }
 
   get speed() {
-    return this.carrying ? 260 * 0.85 : 260;
+    return this.carrying ? 260 * 0.80 : 260;
   }
 
   update(dt) {

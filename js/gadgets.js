@@ -23,11 +23,11 @@ function gadgetById(id) {
 // notification), mana-gated activation, decoy/mine lifecycles.
 function updateGadgets(dt) {
   // Tick cooldowns; fire a "replenished" boom when one completes.
-  GADGETS.filter(gg => game.has(gg.id)).forEach((gg, i) => {
+  GADGETS.filter(gg => game.has(gg.id)).forEach((gg) => {
     const before = game.cooldowns[gg.id] || 0;
     if (before > 0) {
       game.cooldowns[gg.id] = before - dt;
-      if (before - dt <= 0 && gg.cd > 0) game.skillReady(gg, i);
+      if (before - dt <= 0 && gg.cd > 0) game.skillReady(gg);
     }
   });
   const p = game.player;

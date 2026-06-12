@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Treasure Run</title>
 <style>
   html, body {
@@ -11,6 +11,10 @@
     height: 100%;
     background: #0b0d16;
     overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
   }
   body {
     display: flex;
@@ -23,6 +27,7 @@
     width: min(100vw, calc(100vh * 16 / 9));
     aspect-ratio: 16 / 9;
     background: #1a1c2c;
+    touch-action: none;
   }
 </style>
 </head>
