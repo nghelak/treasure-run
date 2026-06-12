@@ -18,7 +18,11 @@ class Enemy {
     this.spriteW = Sprites.chaserW;
     this.dropT = 0;
     this.touchDamage = true;
+    this.repathT = rnd(0, 0.3);
+    this.waypoint = null;
   }
+
+  static GROUND = { x: 0, y: 680, w: 2400 };
 
   update(dt, target) {
     this.anim += dt;
@@ -47,28 +51,102 @@ class Enemy {
     this.locomote(dt, tgt, this.speed * game.enemySpeedMul());
   }
 
+  // Which platform (or the ground) a body is standing on; null while airborne.
+  nodeOf(b) {
+    const feet = b.y + b.h;
+    if (feet >= 672) return Enemy.GROUND;
+    for (const p of Level.platforms) {
+      if (Math.abs(feet - p.y) <= 8 && cx(b) >= p.x - 6 && cx(b) <= p.x + p.w + 6) return p;
+    }
+    return null;
+  }
+
+  // BFS over the platform graph (edges = one enemy jump: rise <= 120px,
+  // horizontal gap <= 170px; descents of any height allowed). Sets
+  // this.waypoint to the next platform on the path, or null to chase direct.
+  repath(tgt) {
+    const myN = this.nodeOf(this);
+    const tgN = this.nodeOf(tgt);
+    if (!myN || !tgN) return;          // someone is airborne: keep old plan
+    if (myN === tgN) { this.waypoint = null; return; }
+    const nodes = [Enemy.GROUND, ...Level.platforms];
+    const mi = nodes.indexOf(myN), ti = nodes.indexOf(tgN);
+    const prev = new Array(nodes.length).fill(-1);
+    prev[mi] = mi;
+    const queue = [mi];
+    while (queue.length) {
+      const ci = queue.shift();
+      if (ci === ti) break;
+      const c = nodes[ci];
+      for (let pi = 0; pi < nodes.length; pi++) {
+        if (prev[pi] !== -1) continue;
+        const p = nodes[pi];
+        const rise = c.y - p.y;
+        const hGap = Math.max(p.x - (c.x + c.w), c.x - (p.x + p.w));
+        if (rise <= 120 && hGap <= 170) { prev[pi] = ci; queue.push(pi); }
+      }
+    }
+    if (prev[ti] === -1) { this.waypoint = null; return; }
+    let cur = ti;
+    while (prev[cur] !== mi) cur = prev[cur];
+    this.waypoint = nodes[cur];
+  }
+
   locomote(dt, tgt, spd) {
     if (!tgt) {
       this.vx = approach(this.vx, 0, 1600 * dt);
       return;
     }
-    const dx = cx(tgt) - cx(this);
-    const dir = Math.abs(dx) > 8 ? Math.sign(dx) : 0;
+    this.repathT -= dt;
+    if (this.repathT <= 0 && this.onGround) { this.repath(tgt); this.repathT = 0.4; }
+
+    const feet = this.y + this.h;
+    let aimX = cx(tgt);
+    let stepJump = false, wantDrop = false;
+    const wp = this.waypoint;
+    if (wp) {
+      const inSpan = cx(this) > wp.x + 6 && cx(this) < wp.x + wp.w - 6;
+      if (wp.y <= feet + 8) {
+        // Waypoint is above or level: head for its span
+        aimX = clamp(cx(this), wp.x + 20, wp.x + wp.w - 20);
+        if (inSpan && wp.y < feet - 8) {
+          stepJump = true; // directly underneath: hop straight up onto it
+        } else if (this.onGround) {
+          // Running edge jump: leap from the lip of the current support
+          // toward the waypoint instead of blindly walking off
+          const myN = this.nodeOf(this);
+          if (myN && myN !== Enemy.GROUND) {
+            const dirW = Math.sign(aimX - cx(this)) || this.facing;
+            const lip = dirW > 0 ? myN.x + myN.w : myN.x;
+            if ((dirW > 0 ? lip - cx(this) : cx(this) - lip) < 18) stepJump = true;
+          }
+        }
+      } else {
+        // Descend: move within its span (toward the target) and drop/walk off
+        aimX = clamp(cx(tgt), wp.x + 20, wp.x + wp.w - 20);
+        wantDrop = inSpan;
+      }
+    }
+
+    const dx = aimX - cx(this);
+    const dir = Math.abs(dx) > 6 ? Math.sign(dx) : 0;
     this.vx = approach(this.vx, dir * spd, 2200 * dt);
     if (dir) this.facing = dir;
 
-    if (this.onGround && dir && this.jumpCd <= 0) {
+    if (this.onGround && this.jumpCd <= 0) {
       const aheadX = dir > 0 ? this.x + this.w + 8 : this.x - 8;
-      const wall = Level.solidAt(aheadX, this.y + this.h - 10) || this.blockedX;
-      const gap = !Level.groundBelow(aheadX, this.y + this.h, 160);
-      const targetAbove = (tgt.y + tgt.h) < this.y - 30 && Math.abs(dx) < 150;
-      if (wall || gap || targetAbove) {
+      const wall = dir !== 0 && (Level.solidAt(aheadX, this.y + this.h - 10) || this.blockedX);
+      const gap = dir !== 0 && !wantDrop && !Level.groundBelow(aheadX, this.y + this.h, 160);
+      const directAbove = !wp && (tgt.y + tgt.h) < this.y - 30 &&
+        feet - (tgt.y + tgt.h) <= 130 && Math.abs(cx(tgt) - cx(this)) < 180;
+      if (wall || gap || directAbove || stepJump) {
         this.vy = -JUMPV;
         this.jumpCd = 0.6;
       }
     }
-    // Drop down to a target far below
-    if (this.onGround && tgt.y > this.y + this.h + 80 && Math.abs(dx) < 60) {
+    // Drop through one-way platforms when descending
+    if (this.onGround && (wantDrop ||
+        (!wp && tgt.y > this.y + this.h + 80 && Math.abs(cx(tgt) - cx(this)) < 60))) {
       this.dropT = 0.18;
     }
     if (this.dropT > 0) this.dropT -= dt;

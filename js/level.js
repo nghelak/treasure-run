@@ -33,33 +33,41 @@ const Level = {
   generate(round) {
     const P = [{ x: 0, y: 680, w: 2400, h: 40 }]; // ground
 
-    // Main chain, left -> right, climbing toward the treasure perch
+    // Main chain, left -> right, in a mountain-wave profile: it climbs to a
+    // peak (y ~360) then dips back to ground-reachable height (y ~600) and
+    // repeats. Every stretch of ground has stairs nearby, so enemies can
+    // always climb after the player — no safe perches.
     let x = rnd(210, 290);
-    let y = rnd(560, 590);
-    let last = null;
+    let y = rnd(575, 600);
+    let dirUp = true;
+    const chain = [];
     while (x < 2080) {
       const w = Math.round(rnd(110, 170));
-      last = { x: Math.round(x), y: Math.round(y), w, h: 12, oneWay: true };
-      P.push(last);
+      const p = { x: Math.round(x), y: Math.round(y), w, h: 12, oneWay: true };
+      P.push(p);
+      chain.push(p);
       x += w + rnd(40, 90);
-      y += rnd(-105, -45);
-      if (y < 215) y = rnd(215, 285);
+      y += dirUp ? rnd(-85, -35) : rnd(35, 85);
+      if (y < 380) { y = Math.max(360, y); dirUp = false; }
+      else if (y > 600) { y = Math.min(600, y); dirUp = true; }
     }
-    this.treasureSpawn = { x: Math.round(last.x + last.w / 2 - 14), y: last.y - 24 };
+    // Treasure goes on the highest of the last few platforms
+    const perch = chain.slice(-4).reduce((a, b) => (b.y < a.y ? b : a));
+    this.treasureSpawn = { x: Math.round(perch.x + perch.w / 2 - 14), y: perch.y - 24 };
 
     // Filler platforms for alternate routes: must not crowd the chain, and
-    // must be jumpable from something below (rise <= 125, within reach)
+    // must be jumpable from something below (rise <= 100, within reach)
     const fillers = 4 + (round % 3);
     for (let i = 0; i < fillers; i++) {
       const f = {
-        x: Math.round(rnd(350, 2120)), y: Math.round(rnd(330, 620)),
+        x: Math.round(rnd(350, 2120)), y: Math.round(rnd(380, 620)),
         w: Math.round(rnd(100, 160)), h: 12, oneWay: true,
       };
       const clear = P.every(p =>
         !(Math.abs(p.y - f.y) < 75 && f.x < p.x + p.w + 60 && f.x + f.w > p.x - 60));
       const reachable = P.some(p => {
         const rise = p.y - f.y;
-        return rise > 0 && rise <= 125 && f.x < p.x + p.w + 170 && f.x + f.w > p.x - 170;
+        return rise > 0 && rise <= 100 && f.x < p.x + p.w + 170 && f.x + f.w > p.x - 170;
       });
       if (clear && reachable) P.push(f);
     }
@@ -71,13 +79,34 @@ const Level = {
       P.push({ x: Math.round(rnd(450, 2150)), y: 680 - h, w: Math.round(rnd(44, 58)), h });
     }
 
+    // Repair pass: every platform must have support below it that enemies can
+    // reliably jump from (rise 20..120, horizontally overlapping). Platforms
+    // at y >= 560 are reachable straight from the ground. Add stepping stones
+    // (lowest platforms first, so stones can support each other) until stable.
+    const supported = (p, all) => p.y >= 560 || all.some(q => {
+      if (q === p) return false;
+      const rise = p === q ? 0 : q.y - p.y;
+      return rise >= 20 && rise <= 120 &&
+        p.x < q.x + q.w + 150 && p.x + p.w > q.x - 150;
+    });
+    for (let guard = 0; guard < 24; guard++) {
+      const broken = P.filter(p => p.oneWay && !supported(p, P))
+        .sort((a, b) => b.y - a.y)[0];
+      if (!broken) break;
+      P.push({
+        x: Math.round(broken.x + broken.w / 2 - 55 + rnd(-30, 30)),
+        y: Math.round(broken.y + rnd(90, 115)),
+        w: 110, h: 12, oneWay: true,
+      });
+    }
+
     this.platforms = P;
 
     // Spread on the ground + one guarding the treasure perch
     this.enemySpawns = [
       { x: rnd(950, 1150), y: 640 },
       { x: rnd(1550, 1750), y: 640 },
-      { x: this.treasureSpawn.x - 50, y: last.y - 60 },
+      { x: this.treasureSpawn.x - 50, y: perch.y - 60 },
       { x: rnd(1250, 1450), y: 640 },
       { x: rnd(1850, 2050), y: 640 },
       { x: rnd(550, 750), y: 640 },
