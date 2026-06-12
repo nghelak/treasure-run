@@ -4,6 +4,8 @@ A fast-paced 2D platformer heist game in vanilla JavaScript + Canvas — zero de
 
 **Steal the treasure. Bring it home. Don't get caught.**
 
+▶ **[Play it in your browser](https://nghelak.github.io/treasure-run/)**
+
 ![Made with](https://img.shields.io/badge/made%20with-vanilla%20JS-yellow) ![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 
 ## How to play
